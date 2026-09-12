@@ -75,7 +75,6 @@ router.post('/chat/completions', apiKeyAuth, async (req, res) => {
     });
 
     await handle.settle(usage.total_tokens);
-    await store.touchToken(token.id);
     await store.insertUsage({
       token_id: token.id,
       user_id: token.user_id,

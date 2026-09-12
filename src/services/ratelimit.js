@@ -83,37 +83,45 @@ class RedisRateLimiter {
     const minute = Math.floor(Date.now() / 60000);
 
     const rpmKey = `${PREFIX}rpm:${token.id}:${minute}`;
-    const rpm = await this.redis.eval(LUA_COUNT_WINDOW, 1, rpmKey, token.rpm, 60000);
-    if (Number(rpm[0]) === 0) {
-      return fail('rate_limit_exceeded', `每分钟请求数超过限制（${token.rpm} RPM）`, 60);
+    if (token.rpm > 0) {
+      const rpm = await this.redis.eval(LUA_COUNT_WINDOW, 1, rpmKey, token.rpm, 60000);
+      if (Number(rpm[0]) === 0) {
+        return fail('rate_limit_exceeded', `每分钟请求数超过限制（${token.rpm} RPM）`, 60);
+      }
     }
 
     const concKey = `${PREFIX}conc:${token.id}`;
-    const acquired = await this.redis.eval(LUA_CONC_ACQUIRE, 1, concKey, token.concurrency, 300000);
-    if (Number(acquired) === 0) {
-      return fail('rate_limit_exceeded', `并发数超过限制（${token.concurrency}）`, 5);
+    if (token.concurrency > 0) {
+      const acquired = await this.redis.eval(LUA_CONC_ACQUIRE, 1, concKey, token.concurrency, 300000);
+      if (Number(acquired) === 0) {
+        return fail('rate_limit_exceeded', `并发数超过限制（${token.concurrency}）`, 5);
+      }
     }
 
     const tpmKey = `${PREFIX}tpm:${token.id}:${minute}`;
-    const tpm = await this.redis.eval(LUA_RESERVE, 1, tpmKey, token.tpm, estimatedTokens, 60000);
-    if (Number(tpm[0]) === 0) {
-      await this.redis.eval(LUA_CONC_RELEASE, 1, concKey);
-      return fail('rate_limit_exceeded', `每分钟 token 数超过限制（${token.tpm} TPM）`, 60);
+    if (token.tpm > 0) {
+      const tpm = await this.redis.eval(LUA_RESERVE, 1, tpmKey, token.tpm, estimatedTokens, 60000);
+      if (Number(tpm[0]) === 0) {
+        if (token.concurrency > 0) await this.redis.eval(LUA_CONC_RELEASE, 1, concKey);
+        return fail('rate_limit_exceeded', `每分钟 token 数超过限制（${token.tpm} TPM）`, 60);
+      }
     }
 
     const dayKey = `${PREFIX}day:${token.id}:${localDay()}`;
-    const daily = await this.redis.eval(
-      LUA_RESERVE,
-      1,
-      dayKey,
-      token.daily_token_limit,
-      estimatedTokens,
-      secondsUntilTomorrow()
-    );
-    if (Number(daily[0]) === 0) {
-      await this.redis.eval(LUA_SETTLE, 1, tpmKey, -estimatedTokens);
-      await this.redis.eval(LUA_CONC_RELEASE, 1, concKey);
-      return fail('insufficient_quota', '今日 token 额度已用尽', 3600);
+    if (token.daily_token_limit > 0) {
+      const daily = await this.redis.eval(
+        LUA_RESERVE,
+        1,
+        dayKey,
+        token.daily_token_limit,
+        estimatedTokens,
+        secondsUntilTomorrow()
+      );
+      if (Number(daily[0]) === 0) {
+        if (token.tpm > 0) await this.redis.eval(LUA_SETTLE, 1, tpmKey, -estimatedTokens);
+        if (token.concurrency > 0) await this.redis.eval(LUA_CONC_RELEASE, 1, concKey);
+        return fail('insufficient_quota', '今日 token 额度已用尽', 3600);
+      }
     }
 
     const self = this;
@@ -123,15 +131,15 @@ class RedisRateLimiter {
       async settle(actualTokens) {
         const delta = Number(actualTokens || 0) - estimatedTokens;
         if (delta !== 0) {
-          await self._safe(() => self.redis.eval(LUA_SETTLE, 1, tpmKey, delta));
-          await self._safe(() => self.redis.eval(LUA_SETTLE, 1, dayKey, delta));
+          if (token.tpm > 0) await self._safe(() => self.redis.eval(LUA_SETTLE, 1, tpmKey, delta));
+          if (token.daily_token_limit > 0) await self._safe(() => self.redis.eval(LUA_SETTLE, 1, dayKey, delta));
         }
-        await self._safe(() => self.redis.eval(LUA_CONC_RELEASE, 1, concKey));
+        if (token.concurrency > 0) await self._safe(() => self.redis.eval(LUA_CONC_RELEASE, 1, concKey));
       },
       async release() {
-        await self._safe(() => self.redis.eval(LUA_SETTLE, 1, tpmKey, -estimatedTokens));
-        await self._safe(() => self.redis.eval(LUA_SETTLE, 1, dayKey, -estimatedTokens));
-        await self._safe(() => self.redis.eval(LUA_CONC_RELEASE, 1, concKey));
+        if (token.tpm > 0) await self._safe(() => self.redis.eval(LUA_SETTLE, 1, tpmKey, -estimatedTokens));
+        if (token.daily_token_limit > 0) await self._safe(() => self.redis.eval(LUA_SETTLE, 1, dayKey, -estimatedTokens));
+        if (token.concurrency > 0) await self._safe(() => self.redis.eval(LUA_CONC_RELEASE, 1, concKey));
       },
     };
   }
@@ -201,26 +209,28 @@ class MemoryRateLimiter {
     const minute = Math.floor(Date.now() / 60000);
 
     const rpmKey = `${PREFIX}rpm:${token.id}:${minute}`;
-    const rpm = this._window(rpmKey, 60000);
-    rpm.value += 1;
-    if (rpm.value > token.rpm) {
-      return fail('rate_limit_exceeded', `每分钟请求数超过限制（${token.rpm} RPM）`, 60);
+    if (token.rpm > 0) {
+      const rpm = this._window(rpmKey, 60000);
+      rpm.value += 1;
+      if (rpm.value > token.rpm) {
+        return fail('rate_limit_exceeded', `每分钟请求数超过限制（${token.rpm} RPM）`, 60);
+      }
     }
 
-    if (!this._acquire(token.id, token.concurrency)) {
+    if (token.concurrency > 0 && !this._acquire(token.id, token.concurrency)) {
       return fail('rate_limit_exceeded', `并发数超过限制（${token.concurrency}）`, 5);
     }
 
     const tpmKey = `${PREFIX}tpm:${token.id}:${minute}`;
-    if (!this._reserve(tpmKey, token.tpm, estimatedTokens, 60000)) {
-      this._release(token.id);
+    if (token.tpm > 0 && !this._reserve(tpmKey, token.tpm, estimatedTokens, 60000)) {
+      if (token.concurrency > 0) this._release(token.id);
       return fail('rate_limit_exceeded', `每分钟 token 数超过限制（${token.tpm} TPM）`, 60);
     }
 
     const dayKey = `${PREFIX}day:${token.id}:${localDay()}`;
-    if (!this._reserve(dayKey, token.daily_token_limit, estimatedTokens, secondsUntilTomorrow() * 1000)) {
-      this._settle(tpmKey, -estimatedTokens);
-      this._release(token.id);
+    if (token.daily_token_limit > 0 && !this._reserve(dayKey, token.daily_token_limit, estimatedTokens, secondsUntilTomorrow() * 1000)) {
+      if (token.tpm > 0) this._settle(tpmKey, -estimatedTokens);
+      if (token.concurrency > 0) this._release(token.id);
       return fail('insufficient_quota', '今日 token 额度已用尽', 3600);
     }
 
@@ -231,15 +241,15 @@ class MemoryRateLimiter {
       async settle(actualTokens) {
         const delta = Number(actualTokens || 0) - estimatedTokens;
         if (delta !== 0) {
-          self._settle(tpmKey, delta);
-          self._settle(dayKey, delta);
+          if (token.tpm > 0) self._settle(tpmKey, delta);
+          if (token.daily_token_limit > 0) self._settle(dayKey, delta);
         }
-        self._release(token.id);
+        if (token.concurrency > 0) self._release(token.id);
       },
       async release() {
-        self._settle(tpmKey, -estimatedTokens);
-        self._settle(dayKey, -estimatedTokens);
-        self._release(token.id);
+        if (token.tpm > 0) self._settle(tpmKey, -estimatedTokens);
+        if (token.daily_token_limit > 0) self._settle(dayKey, -estimatedTokens);
+        if (token.concurrency > 0) self._release(token.id);
       },
     };
   }

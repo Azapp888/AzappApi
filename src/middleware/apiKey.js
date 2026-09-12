@@ -1,11 +1,20 @@
 'use strict';
 
-// 下游 API Key 鉴权：Bearer sk-az-... -> 查库校验状态 / 过期 / IP 白名单
+// 下游 API Key 鉴权：全局固定密钥（默认 azapp888）。
+// 所有用户共用同一把 Key，不做按用户/按令牌的封禁。
 
-const store = require('../store');
-const { hashApiKey } = require('../lib/keys');
+const crypto = require('crypto');
+
+const config = require('../config');
 const { sendOpenAIError } = require('../lib/openai');
-const { clientIp, ipMatches } = require('../lib/limits');
+const { clientIp } = require('../lib/limits');
+
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
 
 async function apiKeyAuth(req, res, next) {
   const header = req.headers.authorization || '';
@@ -14,28 +23,20 @@ async function apiKeyAuth(req, res, next) {
   if (!raw) {
     return sendOpenAIError(res, 401, '缺少 API Key，请在 Authorization 头中提供 Bearer 令牌。', 'invalid_request_error', 'invalid_api_key');
   }
-
-  const token = await store.findTokenByHash(hashApiKey(raw));
-  if (!token) {
+  if (!safeEqual(raw, config.GATEWAY_API_KEY)) {
     return sendOpenAIError(res, 401, 'API Key 无效。', 'invalid_request_error', 'invalid_api_key');
   }
-  if (token.status !== 'active') {
-    return sendOpenAIError(res, 401, 'API Key 已被停用。', 'invalid_request_error', 'invalid_api_key');
-  }
-  if (token.user_status && token.user_status !== 'active') {
-    return sendOpenAIError(res, 401, '账号已被停用。', 'invalid_request_error', 'account_disabled');
-  }
-  if (token.expires_at && new Date(token.expires_at).getTime() < Date.now()) {
-    return sendOpenAIError(res, 401, 'API Key 已过期。', 'invalid_request_error', 'invalid_api_key');
-  }
 
-  const ip = clientIp(req);
-  if (!ipMatches(token.ip_whitelist, ip)) {
-    return sendOpenAIError(res, 403, `当前 IP ${ip} 不在白名单内。`, 'invalid_request_error', 'ip_not_allowed');
-  }
-
-  req.apiKey = token;
-  req.clientIp = ip;
+  req.apiKey = {
+    id: 'global',
+    user_id: null,
+    plan: 'global',
+    rpm: config.GATEWAY_RPM,
+    concurrency: config.GATEWAY_CONCURRENCY,
+    tpm: config.GATEWAY_TPM,
+    daily_token_limit: config.GATEWAY_DAILY_TOKEN_LIMIT,
+  };
+  req.clientIp = clientIp(req);
   return next();
 }
 

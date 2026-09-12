@@ -2,7 +2,7 @@
 
 Azapp 系列应用的服务端 API 骨架：开箱即用的 Express 工程结构，内置跨域、请求日志、统一错误处理、JWT 鉴权与健康检查，按模块往下加业务即可。
 
-此外集成了 **OpenAI 兼容的 AI API 聚合网关**：对外暴露 `/v1/chat/completions`、`/v1/models`，按 `model` 路由转发到 DeepSeek、阿里云百炼、豆包（火山方舟），带令牌鉴权、RPM/并发/TPM/日额度限流、IP 白名单与用量统计。设计与部署细节见 `/docs/AI-GATEWAY.md`（位于当前工作区）。
+此外集成了 **OpenAI 兼容的 AI API 聚合网关**：对外暴露 `/v1/chat/completions`、`/v1/models`，按 `model` 路由转发到 DeepSeek、阿里云百炼、豆包（火山方舟），带全局统一密钥鉴权、RPM/并发/TPM/日额度限流与用量统计。设计与部署细节见 `/docs/AI-GATEWAY.md`（位于当前工作区）。
 
 ## 🤖 AI 聚合网关快速开始
 
@@ -13,24 +13,19 @@ npm install
 npm start
 ```
 
-需要 Node >= 22（使用内置 `node:sqlite`）。启动后打开管理后台界面：http://localhost:8100/admin （默认 `admin` / `admin123`）。登录后进入「开始配置」向导：第 1 步为三家服务商填入 API Key，第 2 步逐个添加模型，第 3 步创建下游令牌。系统不预置任何模型。
+需要 Node >= 22（使用内置 `node:sqlite`）。启动后打开管理后台界面：http://localhost:8100/admin （默认 `admin` / `admin123`）。登录后进入「开始配置」向导：第 1 步为三家服务商填入 API Key，第 2 步逐个添加模型，第 3 步复制统一接入密钥。系统不预置任何模型。
 
-也可以直接用 API 生成一个令牌并调用：
+也可以直接用统一密钥调用（默认 `azapp888`，可用 `GATEWAY_API_KEY` 修改）：
 
 ```bash
-# 1. 登录管理后台，拿到 admin JWT
+# 1. 登录管理后台，拿到 admin JWT（用于配置渠道和模型）
 curl -s http://localhost:8100/api/admin/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}'
 
-# 2. 用 JWT 创建用户与令牌，响应里的 key 仅返回一次
-curl -s http://localhost:8100/api/admin/tokens \
-  -H "Authorization: Bearer <admin-jwt>" -H "Content-Type: application/json" \
-  -d '{"userId":"u_admin","name":"demo","plan":"free","expires_in_days":7}'
-
-# 3. 用下发的 sk-az-... 调用（model 换成你在后台添加的对外模型名）
+# 2. （在后台填好渠道密钥与模型后）用统一密钥调用
 curl -s http://localhost:8100/v1/chat/completions \
-  -H "Authorization: Bearer sk-az-..." -H "Content-Type: application/json" \
+  -H "Authorization: Bearer azapp888" -H "Content-Type: application/json" \
   -d '{"model":"deepseek-chat","messages":[{"role":"user","content":"你好"}]}'
 ```
 
@@ -45,7 +40,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-OpenAI SDK 只需把 `base_url` 换成本服务地址、`api_key` 换成下发的令牌即可。例如 `base_url="https://openai.azayu.top/v1"`。
+OpenAI SDK 只需把 `base_url` 换成本服务地址、`api_key` 换成统一接入密钥即可。例如 `base_url="https://openai.azayu.top/v1"`、`api_key="azapp888"`。
 
 模型不写死：`model_mappings` 即白名单，你在后台随时增删、启停，未配置的模型返回 404。Nginx 反代与流式（SSE）配置见当前工作区内的 `/deploy/nginx/openai.azayu.top.conf`。
 
@@ -103,10 +98,10 @@ curl http://localhost:8100/api/health
 | GET | `/api/health` | 否 | 健康检查，返回运行状态与 uptime |
 | GET | `/api/me` | 是 | 示例接口，返回 JWT 中的用户信息 |
 | POST | `/api/admin/login` | 否 | 管理后台登录，返回 JWT |
-| POST | `/api/admin/tokens` | JWT | 创建下游令牌，明文 key 仅返回一次 |
-| GET | `/api/admin/usage` | JWT | 用量汇总（按令牌/用户/模型/天） |
-| GET | `/v1/models` | API Key | OpenAI 兼容模型列表 |
-| POST | `/v1/chat/completions` | API Key | OpenAI 兼容对话，支持 `stream` |
+| GET | `/api/admin/access-key` | JWT | 返回全局统一接入密钥与限流配置 |
+| GET | `/api/admin/usage` | JWT | 用量汇总（按模型/天） |
+| GET | `/v1/models` | 统一密钥 | OpenAI 兼容模型列表 |
+| POST | `/v1/chat/completions` | 统一密钥 | OpenAI 兼容对话，支持 `stream` |
 
 带鉴权的请求写法：
 
@@ -131,6 +126,9 @@ curl http://localhost:8100/api/me -H "Authorization: Bearer <你的token>"
 | `REDIS_URL` | - | Redis 连接串（多实例时使用） |
 | `ENCRYPTION_KEY` | 回退到 `JWT_SECRET` | 上游密钥加密密钥，**生产单独设置** |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin123` | 初始管理员 |
+| `GATEWAY_API_KEY` | `azapp888` | 全局统一接入密钥，所有用户共用 |
+| `GATEWAY_RPM` / `GATEWAY_CONCURRENCY` / `GATEWAY_TPM` | `60` / `5` / `60000` | 全局限流，0 表示不限 |
+| `GATEWAY_DAILY_TOKEN_LIMIT` | `0` | 全局日额度（token），0 表示不限 |
 | `UPSTREAM_DEEPSEEK_KEY` | - | DeepSeek 上游密钥 |
 | `UPSTREAM_ALIYUN_KEY` | - | 阿里云百炼上游密钥 |
 | `UPSTREAM_DOUBAO_KEY` | - | 豆包（火山方舟）上游密钥 |

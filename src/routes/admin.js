@@ -1,6 +1,7 @@
 'use strict';
 
 // 管理后台接口：/api/admin/*（JWT 鉴权）
+// 下游接入使用统一固定密钥，不再提供按用户/按令牌的创建与封禁。
 
 const { Router } = require('express');
 const jwt = require('jsonwebtoken');
@@ -8,25 +9,14 @@ const jwt = require('jsonwebtoken');
 const config = require('../config');
 const store = require('../store');
 const auth = require('../middleware/auth');
-const { hashPassword, verifyPassword } = require('../lib/password');
-const { generateApiKey } = require('../lib/keys');
+const { verifyPassword } = require('../lib/password');
 const { encrypt } = require('../lib/crypto');
 
 const router = Router();
 
-const PLAN_LIMITS = {
-  free: { rpm: 30, concurrency: 3, tpm: 20000, daily_token_limit: 100000 },
-  paid: { rpm: 60, concurrency: 3, tpm: 60000, daily_token_limit: 1000000 },
-};
-
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const ok = (res, data = {}) => res.json({ success: true, ...data });
 const bad = (res, status, message) => res.status(status).json({ success: false, message });
-
-function publicToken(t) {
-  const { key_hash, ...rest } = t;
-  return rest;
-}
 
 function publicChannel(c) {
   const { api_key_enc, ...rest } = c;
@@ -67,90 +57,18 @@ router.post(
 
 router.use(auth, requireAdmin);
 
-// ---------------- 用户 ----------------
+// ---------------- 接入密钥 ----------------
 
-router.get(
-  '/users',
-  ah(async (req, res) => ok(res, { data: await store.listUsers() }))
-);
-
-router.post(
-  '/users',
-  ah(async (req, res) => {
-    const { username, password, role = 'user' } = req.body || {};
-    if (!username || !password) return bad(res, 400, '用户名和密码不能为空');
-    if (await store.findUserByUsername(username)) return bad(res, 409, '用户名已存在');
-
-    const user = await store.createUser({ username, password_hash: hashPassword(password), role });
-    const { password_hash, ...safe } = user;
-    return ok(res, { data: safe });
-  })
-);
-
-// ---------------- 令牌 ----------------
-
-router.get(
-  '/tokens',
-  ah(async (req, res) => ok(res, { data: (await store.listTokens({ userId: req.query.userId })).map(publicToken) }))
-);
-
-router.post(
-  '/tokens',
-  ah(async (req, res) => {
-    const {
-      userId,
-      name,
-      plan = 'free',
-      rpm,
-      concurrency,
-      tpm,
-      daily_token_limit,
-      ip_whitelist = '',
-      expires_in_days,
-      expires_at,
-    } = req.body || {};
-
-    if (!userId || !name) return bad(res, 400, 'userId 和 name 不能为空');
-    if (!(await store.findUserById(userId))) return bad(res, 404, '用户不存在');
-
-    const base = PLAN_LIMITS[plan] || PLAN_LIMITS.free;
-    const days = Math.min(90, Math.max(1, Number(expires_in_days) || 30));
-    const expiry = expires_at || new Date(Date.now() + days * 86400000).toISOString();
-
-    const key = generateApiKey();
-    const token = await store.createToken({
-      user_id: userId,
-      name,
-      key_hash: key.hash,
-      key_prefix: key.prefix,
-      plan,
-      rpm: Number(rpm || base.rpm),
-      concurrency: Number(concurrency || base.concurrency),
-      tpm: Number(tpm || base.tpm),
-      daily_token_limit: Number(daily_token_limit || base.daily_token_limit),
-      ip_whitelist,
-      expires_at: expiry,
-    });
-
-    return ok(res, { data: publicToken(token), key: key.plain });
-  })
-);
-
-router.patch(
-  '/tokens/:id',
-  ah(async (req, res) => {
-    const token = await store.updateToken(req.params.id, req.body || {});
-    if (!token) return bad(res, 404, '令牌不存在');
-    return ok(res, { data: publicToken(token) });
-  })
-);
-
-router.post(
-  '/tokens/:id/revoke',
-  ah(async (req, res) => {
-    const token = await store.revokeToken(req.params.id);
-    if (!token) return bad(res, 404, '令牌不存在');
-    return ok(res, { data: publicToken(token) });
+// 全局固定密钥，所有下游用户共用；不需要按用户封禁。
+router.get('/access-key', (req, res) =>
+  ok(res, {
+    api_key: config.GATEWAY_API_KEY,
+    limits: {
+      rpm: config.GATEWAY_RPM,
+      concurrency: config.GATEWAY_CONCURRENCY,
+      tpm: config.GATEWAY_TPM,
+      daily_token_limit: config.GATEWAY_DAILY_TOKEN_LIMIT,
+    },
   })
 );
 
@@ -221,8 +139,8 @@ router.patch(
 router.get(
   '/usage',
   ah(async (req, res) => {
-    const { tokenId, userId, from, to } = req.query;
-    const summary = await store.usageSummary({ tokenId, userId, from, to });
+    const { from, to } = req.query;
+    const summary = await store.usageSummary({ from, to });
     return ok(res, summary);
   })
 );

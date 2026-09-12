@@ -1,6 +1,6 @@
 # OpenAI 兼容 AI API 聚合中转站 · 设计与实现
 
-对外提供 OpenAI 风格接口（`/v1/chat/completions`、`/v1/models`），把请求按 `model` 路由到 DeepSeek、阿里云百炼、豆包（火山方舟）三家上游；下游用户只持有本系统下发的令牌，不接触上游密钥。
+对外提供 OpenAI 风格接口（`/v1/chat/completions`、`/v1/models`），把请求按 `model` 路由到 DeepSeek、阿里云百炼、豆包（火山方舟）三家上游；下游用户持有全局统一的接入密钥（默认 `azapp888`），不接触上游密钥。
 
 ---
 
@@ -8,23 +8,23 @@
 
 ```mermaid
 graph TD
-    C["用户 / OpenAI SDK"] -->|"Bearer sk-az-xxx"| GW["Azapp AI 网关 (Express /v1)"]
-    GW --> AUTH["令牌鉴权<br/>状态/过期/IP白名单"]
-    AUTH --> RL["限流与额度<br/>RPM/并发/TPM/日额度 (Redis)"]
+    C["用户 / OpenAI SDK"] -->|"Bearer azapp888"| GW["Azapp AI 网关 (Express /v1)"]
+    GW --> AUTH["统一密钥鉴权<br/>全局固定 Key"]
+    AUTH --> RL["全局限流<br/>RPM/并发/TPM/日额度 (Redis)"]
     RL --> ROUTE["模型路由<br/>model -> 渠道 -> 上游模型"]
     ROUTE --> ADP["适配器<br/>DeepSeek/Aliyun/Doubao"]
     ADP --> DS["DeepSeek API"]
     ADP --> AL["阿里云百炼 API"]
     ADP --> DB["豆包 火山方舟 API"]
-    GW --> PG["PostgreSQL<br/>用户/令牌/渠道/映射/用量"]
+    GW --> PG["SQLite / PostgreSQL<br/>渠道/映射/用量"]
     RL --> PG
     GW --> LOG["管理后台界面 /admin 与管理 API /api/admin"]
 ```
 
 请求链路（文字）：
 
-1. SDK 带 `Authorization: Bearer sk-az-...` 请求 `/v1/chat/completions`。
-2. 鉴权：sha256 命中 `api_tokens`，校验状态、过期时间、用户状态、IP 白名单。
+1. SDK 带 `Authorization: Bearer azapp888`（可用 `GATEWAY_API_KEY` 修改）请求 `/v1/chat/completions`。
+2. 鉴权：与全局固定密钥做常量时间比较，不匹配返回 401；不按用户/令牌封禁。
 3. 路由：按 `model` 查 `model_mappings`，得到渠道与上游模型名（白名单之外直接 404）。
 4. 限流（Redis）：RPM → 并发 → TPM 预留 → 日额度预留；任一超限返回 429。
 5. 适配：解密渠道密钥，按厂商适配器构造上游请求（DeepSeek/百炼走 OpenAI 兼容端点，豆包做字段转换）。
@@ -79,13 +79,13 @@ src/
 ├── db/schema.sql              # PostgreSQL 表结构
 ├── lib/
 │   ├── crypto.js              # 上游密钥 AES-256-GCM 加解密
-│   ├── keys.js                # 下游令牌生成与 sha256
-│   ├── limits.js              # token 预估 / IP 匹配
+│   ├── keys.js                # （旧令牌工具，保留兼容）
+│   ├── limits.js              # token 预估
 │   ├── openai.js              # OpenAI 错误结构
 │   ├── password.js            # bcrypt 密码
 │   └── redis.js               # Redis 客户端
 ├── middleware/
-│   ├── apiKey.js              # /v1 令牌鉴权
+│   ├── apiKey.js              # /v1 全局统一密钥鉴权
 │   └── auth.js                # 后台 JWT 鉴权
 ├── routes/
 │   ├── v1.js                  # OpenAI 兼容接口
@@ -105,23 +105,24 @@ src/
 
 | 表 | 作用 | 关键字段 |
 |---|---|---|
-| `users` | 用户 | `username`、`password_hash`、`role`、`status` |
+| `users` | 管理员账号 | `username`、`password_hash`、`role`、`status` |
 | `channels` | 上游渠道 | `provider`、`base_url`、`api_key_enc`（AES-256-GCM 密文） |
-| `api_tokens` | 下游令牌 | `key_hash`、`plan`、`rpm`、`concurrency`、`tpm`、`daily_token_limit`、`ip_whitelist`、`expires_at` |
 | `model_mappings` | 模型路由 | `model_name`（公开）、`channel_id`、`upstream_model`、`enabled` |
 | `usage_logs` | 用量明细 | `token_id`、`prompt_tokens`、`completion_tokens`、`total_tokens`、`latency_ms`、`status` |
+
+> 下游鉴权使用全局固定密钥（`GATEWAY_API_KEY`，默认 `azapp888`），不再使用按用户/按令牌的 `api_tokens`，也不做按用户封禁。
 
 完整 DDL 见 `src/db/schema.sql`。上游密钥只落密文，后台接口返回时已剔除 `api_key_enc`。
 
 ### 4.3 核心接口
 
-- `GET /admin`：内置可视化管理后台（单页，无需构建）。登录后进入「开始配置」向导：先填各服务商密钥，再逐个添加模型；之后可管理用户、令牌、渠道并查看用量。
+- `GET /admin`：内置可视化管理后台（单页，无需构建）。登录后进入「开始配置」向导：先填各服务商密钥，再逐个添加模型，最后复制统一接入密钥。
 - `GET /v1/models`：返回已配置且启用的模型。
 - `POST /v1/chat/completions`：鉴权 → 路由 → 限流 → 适配转发 → 结算 → 记账，支持 `stream`。
 - `POST /api/admin/login`：后台登录，返回 JWT 与当前用户信息。
-- `POST /api/admin/users`、`POST /api/admin/tokens`、`PATCH /api/admin/tokens/:id`、`POST /api/admin/tokens/:id/revoke`。
+- `GET /api/admin/access-key`：返回全局统一接入密钥与限流配置。
 - `POST /api/admin/mappings`、`PATCH /api/admin/mappings/:id`：新增/启停模型映射；`GET /api/admin/mappings` 查看全部（含停用）。模型完全由你在后台维护，不限固定几个。
-- `GET /api/admin/usage?tokenId=&userId=&from=&to=`：用量汇总（总量 / 按模型 / 按天）。
+- `GET /api/admin/usage?from=&to=`：用量汇总（总量 / 按模型 / 按天）。
 
 ### 4.4 限流实现（`src/services/ratelimit.js`）
 
@@ -163,13 +164,15 @@ GATEWAY_STORE=memory GATEWAY_REDIS=memory MOCK_UPSTREAM=true npm start
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="https://openai.azayu.top/v1", api_key="sk-az-xxxx")
+client = OpenAI(base_url="https://openai.azayu.top/v1", api_key="azapp888")
 resp = client.chat.completions.create(
     model="deepseek-chat",  # 换成你在后台添加的“对外模型名”
     messages=[{"role": "user", "content": "你好"}],
 )
 print(resp.choices[0].message.content)
 ```
+
+> `api_key` 为全局统一接入密钥（默认 `azapp888`，可用 `GATEWAY_API_KEY` 修改），所有用户共用。
 
 ### 4.7 模型与渠道：全部后台维护
 
@@ -178,7 +181,7 @@ print(resp.choices[0].message.content)
 1. 打开 `https://openai.azayu.top/admin` 登录。
 2. 第 1 步：为 DeepSeek、阿里云百炼、豆包填入各自的 API Key（预置的三个渠道是真实厂商地址，密钥加密存储、页面不回显）。
 3. 第 2 步：逐个添加模型，填写「对外模型名」「上游模型名」「走哪个渠道」。上游模型名必须与厂商文档/控制台完全一致。
-4. 第 3 步：创建下游令牌，发给使用方。
+4. 第 3 步：复制全局统一接入密钥，发给使用方（所有用户共用，不做按用户封禁）。
 
 也可用 API 操作：
 
@@ -205,14 +208,14 @@ curl -s -X PATCH https://openai.azayu.top/api/admin/mappings/<mapping_id> \
 ```
 
 - 默认不预置任何模型；如确有需要，可用 `DEFAULT_MODEL_MAPPINGS` JSON 一次性预置。
-- 下游令牌创建时可选 `plan` 与各限额，模型层面无需再给令牌单独授权。
+- 下游使用全局统一密钥（`GET /api/admin/access-key` 可查看），模型层面无需再做授权。
 
 ### 4.8 域名与反向代理（openai.azayu.top）
 
 服务监听 `8100`，由你的服务器上的 Nginx 反代到 `openai.azayu.top`。完整配置见当前工作区内的 `/deploy/nginx/openai.azayu.top.conf`，要点：
 
 - 流式必须 `proxy_buffering off`，否则 SSE 会被一起缓冲、破坏逐字输出。
-- 设置 `X-Forwarded-For`，否则令牌 IP 白名单取不到真实客户端 IP。
+- 设置 `X-Forwarded-For`，便于在用量日志中记录真实客户端 IP。
 - `client_max_body_size` 限制请求体，`proxy_read_timeout 3600s` 适配长回复。
 - 管理接口 `/api/` 建议限制来源 IP；`/v1/` 对外。
 
@@ -233,14 +236,11 @@ SDK 的 `base_url` 即 `https://openai.azayu.top/v1`。
 
 ### 5.1 已在代码中实现
 
-- [x] 模型白名单：以「后台已配置的模型」为准，未配置的模型直接 404。模型可随时在后台增删、启停，不限固定几个，也不预设聊天/编程分类。
-- [x] 令牌有效期：创建时默认 30 天，范围限制 1–90 天，不使用永久令牌。
-- [x] 免费/付费限额分级：free `30 RPM / 3 并发 / 20k TPM / 10w 日额度`，paid `60 RPM / 3 并发 / 60k TPM / 100w 日额度`。
-- [x] 日额度硬上限：达到当天上限直接 429（`insufficient_quota`），比只卡 RPM 更有效。
-- [x] IP 白名单：每令牌可绑指定 IP，支持精确与 `203.0.113.*` 前缀通配，非法来源 403。
-- [x] 并发限制：防止单令牌并发跑满上游。
+- [x] 全局统一密钥：所有下游用户共用同一把 `GATEWAY_API_KEY`（默认 `azapp888`），鉴权为常量时间比较；不需要逐个发令牌，也不对个别用户封禁。
+- [x] 模型白名单：以「后台已配置的模型」为准，未配置的模型直接 404。模型可随时在后台增删、启停，不限固定几个。
+- [x] 全局限流：RPM / 并发 / TPM / 日额度（默认 `60 RPM / 5 并发 / 60k TPM / 日额度不限`，可用环境变量调整，0 表示不限）。
 - [x] TPM 预留结算：防止超大请求一次性击穿分钟额度。
-- [x] 令牌只存 hash，明文仅创建时返回一次；上游密钥加密落库。
+- [x] 上游密钥加密落库（AES-256-GCM），接口返回已脱敏。
 - [x] 请求体上限 1MB，流式响应统一解析 usage 记账。
 - [x] 豆包适配器强制 `n=1`。
 
@@ -248,29 +248,24 @@ SDK 的 `base_url` 即 `https://openai.azayu.top/v1`。
 
 - [ ] 关闭浏览器跨域：API 由 SDK 调用，`CORS_ORIGINS` 收紧到管理后台域名，不要用 `*`。
 - [ ] 全站 HTTPS，网关置于 Nginx/云 LB 之后，开启 `X-Forwarded-For` 传递真实 IP。
-- [ ] 不要暴露 `/v1` 之外的内部端口；Postgres/Redis 只在内网。
-- [ ] 单令牌限制可使用模型数量，敏感令牌只开一个模型。
-- [ ] 对 free 令牌设置更小的 `max_tokens` 上限（在网关侧截断）。
+- [ ] 不要暴露 `/v1` 之外的内部端口；数据库只在内网。
+- [ ] 统一密钥请勿公开分发；若泄漏，修改 `GATEWAY_API_KEY` 并重启即可全量失效。
 - [ ] 关闭或限制 `tools` / `function calling`（IDE 反代高度依赖）。
 - [ ] 限制单请求最大 prompt 长度与消息条数。
-- [ ] 上游账号开启账单告警，按日核对上游消耗与本地 `usage_logs`，异常立即封令牌。
+- [ ] 上游账号开启账单告警，按日核对上游消耗与本地 `usage_logs`。
 - [ ] 定期轮换上游密钥与 `ENCRYPTION_KEY`（轮换需重写 `channels.api_key_enc`）。
 - [ ] 管理后台强密码 + 限制来源 IP；JWT 密钥独立于加密密钥。
-- [ ] 增加审计日志：记录令牌、IP、模型、token、耗时、状态，便于溯源。
-- [ ] 行为风控（可选）：同一令牌短时间命中多模型、请求头含 IDE 特征、非聊天参数（如超大 `max_tokens`、`logprobs`）时告警或拒绝。
-- [ ] 令牌按项目/设备分发，便于单独吊销；发现泄漏立即 `revoke`。
+- [ ] 增加审计日志：记录 IP、模型、token、耗时、状态，便于溯源。
 
 ### 5.3 建议的限额参数
 
-| 限制项 | 免费/试用 | 付费/正常 |
+| 限制项 | 默认值 | 说明 |
 |---|---|---|
-| RPM | 30 | 60 |
-| 并发 | 3 | 3 |
-| TPM | 20k | 60k |
-| 日额度 | 10 万 token | 100 万 token |
-| 模型白名单 | 后台已配置模型 | 后台已配置模型 |
-| IP 白名单 | 建议开启 | 建议开启 |
-| 令牌有效期 | 7–30 天 | 7–30 天 |
+| RPM | 60 | 环境变量 `GATEWAY_RPM`，0 表示不限 |
+| 并发 | 5 | 环境变量 `GATEWAY_CONCURRENCY`，0 表示不限 |
+| TPM | 60k | 环境变量 `GATEWAY_TPM`，0 表示不限 |
+| 日额度 | 不限 | 环境变量 `GATEWAY_DAILY_TOKEN_LIMIT`，0 表示不限 |
+| 模型白名单 | 后台已配置模型 | 未配置的模型 404 |
 
 ---
 

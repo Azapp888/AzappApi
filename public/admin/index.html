@@ -93,7 +93,7 @@
 (function () {
   'use strict';
 
-  var state = { token: localStorage.getItem('azapp_token') || '', user: null, tab: 'setup', users: [], channels: [], mappings: [] };
+  var state = { token: localStorage.getItem('azapp_token') || '', user: null, tab: 'setup', channels: [], mappings: [], access: null };
 
   function el(tag, attrs) {
     var node = document.createElement(tag);
@@ -121,13 +121,6 @@
     var t = el('div', { class: 'toast' + (isErr ? ' err' : '') }, msg);
     document.getElementById('toast').appendChild(t);
     setTimeout(function () { t.remove(); }, 4000);
-  }
-
-  function fmtDate(v) {
-    if (!v) return '-';
-    var d = new Date(v);
-    if (isNaN(d.getTime())) return String(v);
-    return d.toISOString().slice(0, 16).replace('T', ' ');
   }
 
   function api(path, opts) {
@@ -187,9 +180,10 @@
   }
 
   function loadAll() {
-    return Promise.all([loadUsers(), api('/channels'), api('/mappings')]).then(function (res) {
-      state.channels = res[1].data || [];
-      state.mappings = res[2].data || [];
+    return Promise.all([api('/channels'), api('/mappings'), api('/access-key')]).then(function (res) {
+      state.channels = res[0].data || [];
+      state.mappings = res[1].data || [];
+      state.access = res[2];
     });
   }
 
@@ -211,8 +205,7 @@
     ['setup', '开始配置'],
     ['models', '模型'],
     ['channels', '渠道'],
-    ['tokens', '令牌'],
-    ['users', '用户'],
+    ['access', '接入密钥'],
     ['overview', '用量'],
   ];
 
@@ -233,7 +226,7 @@
     var view = document.getElementById('view');
     view.innerHTML = '';
     var fn = {
-      setup: renderSetup, overview: renderOverview, tokens: renderTokens, users: renderUsers,
+      setup: renderSetup, overview: renderOverview, access: renderAccess,
       models: renderModels, channels: renderChannels,
     }[state.tab];
     if (fn) fn(view);
@@ -286,9 +279,10 @@
     ));
 
     view.appendChild(el('div', { class: 'card' },
-      el('h2', {}, '第 3 步：创建下游令牌'),
-      el('div', { class: 'muted-small', style: 'margin-bottom:12px' }, '把令牌发给使用方，对方用 OpenAI SDK 调用你的地址即可。'),
-      el('button', { class: 'primary', onclick: function () { state.tab = 'tokens'; renderTabs(); render(); } }, '去创建令牌')
+      el('h2', {}, '第 3 步：把接入密钥交给使用方'),
+      el('div', { class: 'muted-small', style: 'margin-bottom:12px' },
+        '所有用户共用同一把密钥，无需逐个创建令牌，也不做按用户封禁。把密钥发给使用方，对方用 OpenAI SDK 调用你的地址即可。'),
+      accessKeyBox()
     ));
   }
 
@@ -357,140 +351,35 @@
     return el('div', { class: 'scroll' }, el('table', {}, thead, tbody));
   }
 
-  // ---------------- 令牌 ----------------
+  // ---------------- 接入密钥 ----------------
 
-  function tokenForm(view, onDone) {
-    var planSel = el('select', {}, el('option', { value: 'free' }, 'free（30 RPM / 20k TPM / 10w 日额度）'),
-      el('option', { value: 'paid' }, 'paid（60 RPM / 60k TPM / 100w 日额度）'));
-    var userSel = el('select', {}, state.users.map(function (u) { return el('option', { value: u.id }, u.username); }));
-    var nameIn = el('input', { placeholder: '令牌备注，如 chat-site' });
-    var ipIn = el('input', { placeholder: '留空不限制；多个用逗号分隔，支持 203.0.113.*' });
-    var daysIn = el('input', { type: 'number', value: '30', min: '1', max: '90' });
-    var form = el('div', { class: 'card' },
-      el('h2', {}, '创建令牌'),
-      el('div', { class: 'row' },
-        el('label', { class: 'field' }, el('span', {}, '所属用户'), userSel),
-        el('label', { class: 'field' }, el('span', {}, '套餐'), planSel),
-        el('label', { class: 'field' }, el('span', {}, '备注'), nameIn)
-      ),
-      el('div', { class: 'row' },
-        el('label', { class: 'field' }, el('span', {}, 'IP 白名单'), ipIn),
-        el('label', { class: 'field' }, el('span', {}, '有效天数（1-90）'), daysIn)
-      ),
-      el('button', { class: 'primary', onclick: function () {
-        api('/tokens', { method: 'POST', body: {
-          userId: userSel.value, name: nameIn.value.trim() || 'token', plan: planSel.value,
-          ip_whitelist: ipIn.value.trim(), expires_in_days: Number(daysIn.value) || 30,
-        } }).then(function (data) {
-          showKeyModal(data.key);
-          if (onDone) onDone();
-        }).catch(function (e) { toast(e.message, true); });
-      } }, '创建')
+  function accessKeyBox() {
+    var key = (state.access && state.access.api_key) || '';
+    var lim = (state.access && state.access.limits) || {};
+    var box = el('div', { class: 'keybox' }, key || '加载中...');
+    var copyBtn = el('button', { class: 'primary', onclick: function () {
+      var text = (state.access && state.access.api_key) || '';
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () { toast('已复制'); });
+      else toast('请手动复制', true);
+    } }, '复制密钥');
+    return el('div', {},
+      box,
+      el('div', { class: 'muted-small', style: 'margin-bottom:10px' },
+        '限流：' + (lim.rpm || 0) + ' RPM / ' + (lim.concurrency || 0) + ' 并发 / ' + (lim.tpm || 0) + ' TPM / ' +
+        ((lim.daily_token_limit || 0) > 0 ? lim.daily_token_limit + ' 日额度' : '日额度不限')),
+      copyBtn
     );
-    return form;
   }
 
-  function showKeyModal(key) {
-    var overlay = el('div', { class: 'overlay' });
-    var close = function () { overlay.remove(); };
-    var box = el('div', { class: 'modal' },
-      el('h3', {}, '令牌创建成功'),
-      el('div', { class: 'muted' }, '请立即复制保存，关闭后无法再次查看。'),
-      el('div', { class: 'keybox' }, key),
-      el('div', { class: 'actions' },
-        el('button', { onclick: function () {
-          if (navigator.clipboard) navigator.clipboard.writeText(key).then(function () { toast('已复制'); });
-          else toast('请手动复制', true);
-        } }, '复制'),
-        el('button', { class: 'primary', onclick: close }, '我已保存')
-      )
-    );
-    overlay.appendChild(box);
-    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
-    document.body.appendChild(overlay);
-  }
-
-  function renderTokens(view) {
-    var refresh = function () { renderTokens(view); };
-    view.appendChild(tokenForm(view, refresh));
-    api('/tokens').then(function (data) {
-      var userMap = {};
-      state.users.forEach(function (u) { userMap[u.id] = u.username; });
-      var rows = (data.data || []).map(function (t) {
-        return [
-          t.name, userMap[t.user_id] || t.user_id,
-          el('span', { class: 'pill ' + t.plan }, t.plan),
-          t.key_prefix,
-          t.rpm + ' / ' + t.concurrency + ' / ' + t.tpm + ' / ' + t.daily_token_limit,
-          t.ip_whitelist ? t.ip_whitelist : '不限',
-          t.expires_at ? fmtDate(t.expires_at) : '不过期',
-          el('span', { class: 'pill ' + t.status }, t.status),
-          el('span', {},
-            el('button', { onclick: function () { editToken(t, refresh); } }, '限额'),
-            ' ',
-            t.status === 'active'
-              ? el('button', { class: 'danger', onclick: function () {
-                  api('/tokens/' + t.id + '/revoke', { method: 'POST' }).then(function () { toast('已停用'); refresh(); }).catch(function (e) { toast(e.message, true); });
-                } }, '停用')
-              : el('button', { onclick: function () {
-                  api('/tokens/' + t.id, { method: 'PATCH', body: { status: 'active' } }).then(function () { toast('已启用'); refresh(); }).catch(function (e) { toast(e.message, true); });
-                } }, '启用')
-          ),
-        ];
-      });
-      view.appendChild(el('div', { class: 'card' },
-        el('h2', {}, '令牌列表（RPM / 并发 / TPM / 日额度）'),
-        table(['备注', '用户', '套餐', '前缀', '限额', 'IP 白名单', '过期', '状态', '操作'], rows)
-      ));
-    }).catch(function (e) { toast(e.message, true); });
-  }
-
-  function editToken(t, done) {
-    openModal('调整令牌限额：' + t.name, [
-      { name: 'rpm', label: 'RPM', type: 'number', value: t.rpm },
-      { name: 'concurrency', label: '并发', type: 'number', value: t.concurrency },
-      { name: 'tpm', label: 'TPM', type: 'number', value: t.tpm },
-      { name: 'daily_token_limit', label: '日额度（token）', type: 'number', value: t.daily_token_limit },
-      { name: 'ip_whitelist', label: 'IP 白名单', value: t.ip_whitelist || '' },
-    ], function (v) {
-      api('/tokens/' + t.id, { method: 'PATCH', body: {
-        rpm: Number(v.rpm), concurrency: Number(v.concurrency), tpm: Number(v.tpm),
-        daily_token_limit: Number(v.daily_token_limit), ip_whitelist: v.ip_whitelist.trim(),
-      } }).then(function () { toast('已更新'); done(); }).catch(function (e) { toast(e.message, true); });
-    });
-  }
-
-  // ---------------- 用户 ----------------
-
-  function renderUsers(view) {
-    var uIn = el('input', { placeholder: '用户名' });
-    var pIn = el('input', { type: 'password', placeholder: '密码' });
-    var rSel = el('select', {}, el('option', { value: 'user' }, 'user'), el('option', { value: 'admin' }, 'admin'));
+  function renderAccess(view) {
     view.appendChild(el('div', { class: 'card' },
-      el('h2', {}, '创建用户'),
-      el('div', { class: 'row' },
-        el('label', { class: 'field' }, el('span', {}, '用户名'), uIn),
-        el('label', { class: 'field' }, el('span', {}, '密码'), pIn),
-        el('label', { class: 'field' }, el('span', {}, '角色'), rSel)
-      ),
-      el('button', { class: 'primary', onclick: function () {
-        api('/users', { method: 'POST', body: { username: uIn.value.trim(), password: pIn.value, role: rSel.value } })
-          .then(function () { toast('已创建'); loadUsers().then(function () { renderUsers(view); }); })
-          .catch(function (e) { toast(e.message, true); });
-      } }, '创建')
+      el('h2', {}, '接入密钥（全局统一）'),
+      el('div', { class: 'muted-small', style: 'margin-bottom:12px' },
+        '所有用户共用这一把密钥，不需要逐个创建令牌，也不对个别用户封禁。可用环境变量 GATEWAY_API_KEY 修改。'),
+      accessKeyBox(),
+      el('div', { class: 'muted-small', style: 'margin-top:12px' },
+        'OpenAI SDK 调用示例：base_url = 你的域名 + /v1，api_key = 上面的密钥。')
     ));
-    loadUsers().then(function () {
-      view.appendChild(el('div', { class: 'card' },
-        el('h2', {}, '用户列表'),
-        table(['用户名', '角色', '状态', '创建时间'], state.users.map(function (u) {
-          return [u.username, u.role, el('span', { class: 'pill ' + u.status }, u.status), fmtDate(u.created_at)];
-        }))
-      ));
-    });
-  }
-
-  function loadUsers() {
-    return api('/users').then(function (data) { state.users = data.data || []; });
   }
 
   // ---------------- 模型 ----------------

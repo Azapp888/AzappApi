@@ -49,6 +49,16 @@ module.exports = {
   // 上游密钥落库加密密钥；缺省回退到 JWT_SECRET，生产务必单独设置
   ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || 'change-me-in-production',
 
+  // 下游统一固定接入密钥：所有用户共用同一把，不需要按用户封禁。
+  // 可用环境变量 GATEWAY_API_KEY 覆盖，默认 azapp888。
+  GATEWAY_API_KEY: process.env.GATEWAY_API_KEY || 'azapp888',
+
+  // 全局令牌限流（0 表示不限制）
+  GATEWAY_RPM: Number(process.env.GATEWAY_RPM || 60),
+  GATEWAY_CONCURRENCY: Number(process.env.GATEWAY_CONCURRENCY || 5),
+  GATEWAY_TPM: Number(process.env.GATEWAY_TPM || 60000),
+  GATEWAY_DAILY_TOKEN_LIMIT: Number(process.env.GATEWAY_DAILY_TOKEN_LIMIT || 0),
+
   // 初始管理员（首次启动/seed 时创建）
   ADMIN_USERNAME: process.env.ADMIN_USERNAME || 'admin',
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'admin123',
