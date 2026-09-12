@@ -1,0 +1,59 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: azapp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-azapp}
+      POSTGRES_DB: azapp
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U azapp -d azapp"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "8100"
+      GATEWAY_STORE: postgres
+      GATEWAY_REDIS: redis
+      DATABASE_URL: postgres://azapp:${POSTGRES_PASSWORD:-azapp}@db:5432/azapp
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:?please set JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?please set ENCRYPTION_KEY}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      # 上游密钥（首次启动写入 channels 表，加密存储）
+      UPSTREAM_DEEPSEEK_KEY: ${UPSTREAM_DEEPSEEK_KEY:-}
+      UPSTREAM_ALIYUN_KEY: ${UPSTREAM_ALIYUN_KEY:-}
+      UPSTREAM_DOUBAO_KEY: ${UPSTREAM_DOUBAO_KEY:-}
+      MOCK_UPSTREAM: "false"
+    ports:
+      - "${APP_PORT:-8100}:8100"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

@@ -1,0 +1,36 @@
+# 低配单机（RK3566 4GB / 8GB eMMC）Docker 方案：只跑应用容器，
+# 不使用 Postgres/Redis，数据库用单文件 SQLite 挂载到宿主机。
+#
+# 用法：docker compose -f deploy/docker-compose.lowmem.yml up -d --build
+# 提示：8GB eMMC 空间紧张时，优先用 systemd 裸机部署（deploy/install-debian.sh）。
+services:
+  app:
+    build:
+      context: ..
+    image: azapp-api:latest
+    environment:
+      NODE_ENV: production
+      PORT: "8100"
+      GATEWAY_STORE: sqlite
+      GATEWAY_REDIS: memory
+      SQLITE_PATH: /data/azapp.db
+      JWT_SECRET: ${JWT_SECRET:?please set JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?please set ENCRYPTION_KEY}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://openai.azayu.top}
+      UPSTREAM_DEEPSEEK_KEY: ${UPSTREAM_DEEPSEEK_KEY:-}
+      UPSTREAM_ALIYUN_KEY: ${UPSTREAM_ALIYUN_KEY:-}
+      UPSTREAM_DOUBAO_KEY: ${UPSTREAM_DOUBAO_KEY:-}
+      MOCK_UPSTREAM: "false"
+    volumes:
+      # 建议把宿主机路径改到 SATA 盘，如 /mnt/sata/azapp:/data
+      - ./data:/data
+    ports:
+      - "127.0.0.1:${APP_PORT:-8100}:8100"
+    deploy:
+      resources:
+        limits:
+          memory: 1400M
+          cpus: "3.0"
+    restart: unless-stopped

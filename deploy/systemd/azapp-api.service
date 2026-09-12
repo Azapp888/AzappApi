@@ -1,0 +1,35 @@
+[Unit]
+Description=Azapp AI Gateway (OpenAI-compatible)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=azapp
+Group=azapp
+WorkingDirectory=/opt/azapp
+EnvironmentFile=/etc/azapp/azapp.env
+ExecStart=/usr/bin/node --no-warnings /opt/azapp/server.js
+Restart=always
+RestartSec=3
+
+# 低内存单机（RK3566 4GB）资源上限：给系统和其他服务留足内存
+MemoryMax=1400M
+MemoryHigh=1100M
+CPUQuota=300%
+LimitNOFILE=65535
+
+# 收紧权限
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/mnt/sata/azapp /var/log/azapp
+
+# 日志交给 journald，避免写 eMMC
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=azapp
+
+[Install]
+WantedBy=multi-user.target

@@ -2,19 +2,23 @@
   "name": "azapp-api",
   "version": "1.0.0",
   "private": true,
-  "description": "Azapp 服务端 API",
+  "description": "Azapp 服务端 API（含 OpenAI 兼容 AI 聚合网关）",
   "main": "server.js",
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "node --no-warnings server.js",
+    "dev": "node --no-warnings --watch server.js",
+    "seed": "node --no-warnings src/seed.js"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "jsonwebtoken": "^9.0.2"
+    "ioredis": "^5.4.1",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1"
   }
 }

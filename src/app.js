@@ -1,10 +1,13 @@
 'use strict';
 
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 
 const config = require('./config');
 const routes = require('./routes');
+const v1 = require('./routes/v1');
+const { initGateway } = require('./bootstrap');
 
 const app = express();
 
@@ -29,8 +32,26 @@ app.use((req, res, next) => {
   next();
 });
 
+// 确保网关依赖（存储/限流）已就绪
+app.use((req, res, next) => {
+  initGateway()
+    .then(() => next())
+    .catch(next);
+});
+
+// OpenAI 兼容接口：/v1/models、/v1/chat/completions
+app.use('/v1', v1);
+
 // 业务路由
 app.use(config.API_PREFIX, routes);
+
+// 管理后台界面：/admin（静态单页，零构建）
+const adminUiDir = path.join(__dirname, '..', 'public', 'admin');
+app.get(['/admin', '/admin/'], (req, res) => res.sendFile(path.join(adminUiDir, 'index.html')));
+app.use('/admin', express.static(adminUiDir, { index: false, redirect: false }));
+
+// 根路径直接进入管理后台
+app.get('/', (req, res) => res.redirect('/admin'));
 
 // 404
 app.use((req, res) => {

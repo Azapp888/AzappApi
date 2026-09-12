@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Azapp AI 网关 · 管理后台</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #fff; --line: #e3e6ea; --text: #1f2328;
+    --muted: #6b7280; --primary: #2563eb; --danger: #dc2626; --ok: #16a34a; --warn: #d97706;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px; }
+  a { color: var(--primary); }
+  .hidden { display: none !important; }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: #fff;
+    border-radius: 6px; padding: 6px 12px; color: var(--text); }
+  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  button.danger { color: var(--danger); border-color: #f3c6c6; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input, select { font: inherit; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
+    background: #fff; color: var(--text); width: 100%; }
+  label.field { display: block; margin-bottom: 10px; }
+  label.field > span { display: block; color: var(--muted); margin-bottom: 4px; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; background: #fafbfc; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 18px; }
+  .card h2 { margin: 0 0 14px; font-size: 15px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > * { flex: 1; min-width: 150px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .stat .v { font-size: 22px; font-weight: 600; margin-top: 4px; }
+  .stat .k { color: var(--muted); font-size: 12px; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+  .pill.active { background: #dcfce7; color: var(--ok); }
+  .pill.disabled { background: #fee2e2; color: var(--danger); }
+  .pill.free { background: #eef2ff; color: #4f46e5; }
+  .pill.paid { background: #fef3c7; color: var(--warn); }
+  .muted { color: var(--muted); }
+  code { background: #f1f3f5; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+  .scroll { overflow-x: auto; }
+  header { background: #fff; border-bottom: 1px solid var(--line); padding: 12px 20px;
+    display: flex; align-items: center; justify-content: space-between; }
+  header .brand { font-weight: 600; }
+  nav { display: flex; gap: 4px; padding: 10px 20px 0; flex-wrap: wrap; }
+  nav button { border: none; background: transparent; color: var(--muted); padding: 8px 12px; border-radius: 6px 6px 0 0; }
+  nav button.on { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 -1px 0 var(--line) inset; }
+  main { padding: 18px 20px 60px; }
+  .login-wrap { max-width: 360px; margin: 80px auto; }
+  .overlay { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex;
+    align-items: center; justify-content: center; padding: 16px; z-index: 50; }
+  .modal { background: #fff; border-radius: 10px; padding: 20px; width: 100%; max-width: 420px; }
+  .modal h3 { margin: 0 0 14px; font-size: 15px; }
+  .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .keybox { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 12px;
+    font-family: ui-monospace, monospace; word-break: break-all; margin: 10px 0; }
+  #toast { position: fixed; right: 18px; bottom: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 100; }
+  .toast { background: #111827; color: #fff; padding: 10px 14px; border-radius: 8px; max-width: 340px; }
+  .toast.err { background: var(--danger); }
+  .tabs-inline { display: flex; gap: 8px; margin-bottom: 12px; }
+  .muted-small { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div id="login" class="login-wrap hidden">
+  <div class="card">
+    <h2>Azapp AI 网关 · 登录</h2>
+    <label class="field"><span>用户名</span><input id="login-user" value="admin" autocomplete="username"></label>
+    <label class="field"><span>密码</span><input id="login-pass" type="password" autocomplete="current-password"></label>
+    <button class="primary" id="login-btn" style="width:100%">登录</button>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <div class="brand">Azapp AI 网关</div>
+    <div>
+      <span class="muted" id="who"></span>
+      <button id="logout-btn">退出</button>
+    </div>
+  </header>
+  <nav id="tabs"></nav>
+  <main id="view"></main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var state = { token: localStorage.getItem('azapp_token') || '', user: null, tab: 'setup', users: [], channels: [], mappings: [] };
+
+  function el(tag, attrs) {
+    var node = document.createElement(tag);
+    attrs = attrs || {};
+    Object.keys(attrs).forEach(function (k) {
+      var v = attrs[k];
+      if (v === null || v === undefined || v === false) return;
+      if (k === 'class') node.className = v;
+      else if (k.slice(0, 2) === 'on' && typeof v === 'function') node.addEventListener(k.slice(2), v);
+      else if (k === 'html') node.innerHTML = v;
+      else node.setAttribute(k, v);
+    });
+    for (var i = 2; i < arguments.length; i++) {
+      var c = arguments[i];
+      if (Array.isArray(c)) {
+        c.forEach(function (x) { if (x !== null && x !== undefined && x !== false) node.appendChild(typeof x === 'object' ? x : document.createTextNode(String(x))); });
+      } else if (c !== null && c !== undefined && c !== false) {
+        node.appendChild(typeof c === 'object' ? c : document.createTextNode(String(c)));
+      }
+    }
+    return node;
+  }
+
+  function toast(msg, isErr) {
+    var t = el('div', { class: 'toast' + (isErr ? ' err' : '') }, msg);
+    document.getElementById('toast').appendChild(t);
+    setTimeout(function () { t.remove(); }, 4000);
+  }
+
+  function fmtDate(v) {
+    if (!v) return '-';
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return String(v);
+    return d.toISOString().slice(0, 16).replace('T', ' ');
+  }
+
+  function api(path, opts) {
+    opts = opts || {};
+    var headers = opts.headers || {};
+    if (state.token) headers.Authorization = 'Bearer ' + state.token;
+    if (opts.body) headers['Content-Type'] = 'application/json';
+    return fetch('/api/admin' + path, {
+      method: opts.method || 'GET',
+      headers: headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        var json = {};
+        try { json = JSON.parse(text); } catch (e) { json = { message: text }; }
+        if (res.status === 401) { logout(); throw new Error('登录已过期，请重新登录'); }
+        if (!res.ok || json.success === false) throw new Error(json.message || ('请求失败 ' + res.status));
+        return json;
+      });
+    });
+  }
+
+  document.getElementById('login-btn').addEventListener('click', doLogin);
+  document.getElementById('login-pass').addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
+  document.getElementById('logout-btn').addEventListener('click', logout);
+
+  function doLogin() {
+    var username = document.getElementById('login-user').value.trim();
+    var password = document.getElementById('login-pass').value;
+    fetch('/api/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password }),
+    }).then(function (res) {
+      return res.json().then(function (json) {
+        if (!res.ok || !json.success) throw new Error(json.message || '登录失败');
+        return json;
+      });
+    }).then(function (json) {
+      state.token = json.token;
+      state.user = json.user || null;
+      localStorage.setItem('azapp_token', json.token);
+      toast('登录成功');
+      loadAll().then(function () {
+        state.tab = setupIncomplete() ? 'setup' : 'overview';
+        showApp();
+      }).catch(function () { showApp(); });
+    }).catch(function (err) { toast(err.message, true); });
+  }
+
+  function logout() {
+    state.token = '';
+    state.user = null;
+    localStorage.removeItem('azapp_token');
+    document.getElementById('app').classList.add('hidden');
+    document.getElementById('login').classList.remove('hidden');
+  }
+
+  function loadAll() {
+    return Promise.all([loadUsers(), api('/channels'), api('/mappings')]).then(function (res) {
+      state.channels = res[1].data || [];
+      state.mappings = res[2].data || [];
+    });
+  }
+
+  // 向导未完成：存在未配置密钥的渠道，或尚未添加任何模型
+  function setupIncomplete() {
+    var missingKey = state.channels.some(function (c) { return !c.has_api_key; });
+    return missingKey || state.mappings.length === 0;
+  }
+
+  function showApp() {
+    document.getElementById('login').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+    document.getElementById('who').textContent = state.user ? (state.user.username + ' (' + state.user.role + ')') : '';
+    renderTabs();
+    render();
+  }
+
+  var TABS = [
+    ['setup', '开始配置'],
+    ['models', '模型'],
+    ['channels', '渠道'],
+    ['tokens', '令牌'],
+    ['users', '用户'],
+    ['overview', '用量'],
+  ];
+
+  function renderTabs() {
+    var nav = document.getElementById('tabs');
+    nav.innerHTML = '';
+    TABS.forEach(function (t) {
+      var label = t[1];
+      if (t[0] === 'setup' && !setupIncomplete()) label = '配置说明';
+      nav.appendChild(el('button', {
+        class: state.tab === t[0] ? 'on' : '',
+        onclick: function () { state.tab = t[0]; renderTabs(); render(); },
+      }, label));
+    });
+  }
+
+  function render() {
+    var view = document.getElementById('view');
+    view.innerHTML = '';
+    var fn = {
+      setup: renderSetup, overview: renderOverview, tokens: renderTokens, users: renderUsers,
+      models: renderModels, channels: renderChannels,
+    }[state.tab];
+    if (fn) fn(view);
+  }
+
+  // ---------------- 开始配置（向导） ----------------
+
+  function renderSetup(view) {
+    var refresh = function () { loadAll().then(function () { renderTabs(); renderSetup(view); }); };
+
+    view.appendChild(el('div', { class: 'card' },
+      el('h2', {}, '第 1 步：填入服务商密钥'),
+      el('div', { class: 'muted-small', style: 'margin-bottom:12px' },
+        '密钥只用于向对应厂商发起请求，会加密存储在服务端，页面不回显。填好后可点“测试”确认可用。'),
+      table(['服务商', 'Base URL', '密钥状态', '填入密钥', '操作'], state.channels.map(function (c) {
+        var keyInput = el('input', { type: 'password', placeholder: '粘贴 API Key' });
+        var baseInput = el('input', { value: c.base_url });
+        return [
+          el('span', {}, c.name),
+          baseInput,
+          c.has_api_key ? el('span', { class: 'pill active' }, '已配置') : el('span', { class: 'pill disabled' }, '未配置'),
+          keyInput,
+          el('span', {},
+            el('button', { class: 'primary', onclick: function () {
+              var body = { name: c.name, base_url: baseInput.value.trim() };
+              if (keyInput.value.trim()) body.api_key = keyInput.value.trim();
+              if (!keyInput.value.trim() && !c.has_api_key) { toast('请先填入密钥', true); return; }
+              api('/channels/' + c.id, { method: 'PATCH', body: body })
+                .then(function () { toast(c.name + ' 已保存'); refresh(); })
+                .catch(function (e) { toast(e.message, true); });
+            } }, '保存')
+          ),
+        ];
+      }))
+    ));
+
+    view.appendChild(el('div', { class: 'card' },
+      el('h2', {}, '第 2 步：逐个添加模型'),
+      el('div', { class: 'muted-small', style: 'margin-bottom:12px' },
+        '每添加一个模型，就是开放一个对外可调用的模型名。上游模型名必须与厂商文档/控制台完全一致。'),
+      modelAddForm(refresh),
+      el('div', { style: 'margin-top:14px' },
+        state.mappings.length === 0
+          ? el('div', { class: 'muted' }, '尚未添加任何模型')
+          : table(['对外模型名', '渠道', '上游模型', '状态'], state.mappings.map(function (m) {
+              return [m.model_name, m.provider || m.channel_id, m.upstream_model,
+                el('span', { class: 'pill ' + (m.enabled ? 'active' : 'disabled') }, m.enabled ? '启用' : '停用')];
+            }))
+      )
+    ));
+
+    view.appendChild(el('div', { class: 'card' },
+      el('h2', {}, '第 3 步：创建下游令牌'),
+      el('div', { class: 'muted-small', style: 'margin-bottom:12px' }, '把令牌发给使用方，对方用 OpenAI SDK 调用你的地址即可。'),
+      el('button', { class: 'primary', onclick: function () { state.tab = 'tokens'; renderTabs(); render(); } }, '去创建令牌')
+    ));
+  }
+
+  function modelAddForm(onDone) {
+    var nameIn = el('input', { placeholder: '对外模型名，由你命名，如 deepseek-chat' });
+    var upIn = el('input', { placeholder: '上游模型名（厂商文档中的准确名称）' });
+    var chSel = el('select', {}, state.channels.length
+      ? state.channels.map(function (c) { return el('option', { value: c.id }, c.name + '（' + c.provider + '）'); })
+      : [el('option', { value: '' }, '请先配置渠道')]);
+    return el('div', {},
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '对外模型名'), nameIn),
+        el('label', { class: 'field' }, el('span', {}, '上游模型名'), upIn),
+        el('label', { class: 'field' }, el('span', {}, '走哪个渠道'), chSel)
+      ),
+      el('button', { class: 'primary', onclick: function () {
+        if (!nameIn.value.trim() || !upIn.value.trim() || !chSel.value) { toast('三项都要填', true); return; }
+        api('/mappings', { method: 'POST', body: {
+          model_name: nameIn.value.trim(), upstream_model: upIn.value.trim(), channel_id: chSel.value,
+        } }).then(function () { toast('已添加'); nameIn.value = ''; upIn.value = ''; onDone(); })
+          .catch(function (e) { toast(e.message, true); });
+      } }, '添加模型')
+    );
+  }
+
+  // ---------------- 概览 ----------------
+
+  function renderOverview(view) {
+    view.appendChild(el('div', { class: 'card' }, el('h2', {}, '用量概览'), el('div', { class: 'muted', id: 'ov-loading' }, '加载中...')));
+    api('/usage').then(function (data) {
+      view.innerHTML = '';
+      var t = data.totals || {};
+      view.appendChild(el('div', { class: 'grid' },
+        stat('请求数', t.requests || 0),
+        stat('总 token', t.total_tokens || 0),
+        stat('输入 token', t.prompt_tokens || 0),
+        stat('输出 token', t.completion_tokens || 0)
+      ));
+      view.appendChild(el('div', { class: 'card', style: 'margin-top:18px' },
+        el('h2', {}, '按模型统计'),
+        table(['模型', '请求数', 'token'], (data.byModel || []).map(function (m) {
+          return [el('span', {}, m.model || '-'), String(m.requests), String(m.total_tokens)];
+        }))
+      ));
+      view.appendChild(el('div', { class: 'card' },
+        el('h2', {}, '按天统计'),
+        table(['日期', '请求数', 'token'], (data.daily || []).map(function (d) {
+          return [d.date, String(d.requests), String(d.total_tokens)];
+        }))
+      ));
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  function stat(k, v) {
+    return el('div', { class: 'stat' }, el('div', { class: 'k' }, k), el('div', { class: 'v' }, String(v)));
+  }
+
+  function table(headers, rows) {
+    if (!rows || rows.length === 0) return el('div', { class: 'muted' }, '暂无数据');
+    var thead = el('thead', {}, el('tr', {}, headers.map(function (h) { return el('th', {}, h); })));
+    var tbody = el('tbody', {}, rows.map(function (r) {
+      return el('tr', {}, r.map(function (c) {
+        return el('td', {}, typeof c === 'object' && c !== null ? c : String(c));
+      }));
+    }));
+    return el('div', { class: 'scroll' }, el('table', {}, thead, tbody));
+  }
+
+  // ---------------- 令牌 ----------------
+
+  function tokenForm(view, onDone) {
+    var planSel = el('select', {}, el('option', { value: 'free' }, 'free（30 RPM / 20k TPM / 10w 日额度）'),
+      el('option', { value: 'paid' }, 'paid（60 RPM / 60k TPM / 100w 日额度）'));
+    var userSel = el('select', {}, state.users.map(function (u) { return el('option', { value: u.id }, u.username); }));
+    var nameIn = el('input', { placeholder: '令牌备注，如 chat-site' });
+    var ipIn = el('input', { placeholder: '留空不限制；多个用逗号分隔，支持 203.0.113.*' });
+    var daysIn = el('input', { type: 'number', value: '30', min: '1', max: '90' });
+    var form = el('div', { class: 'card' },
+      el('h2', {}, '创建令牌'),
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '所属用户'), userSel),
+        el('label', { class: 'field' }, el('span', {}, '套餐'), planSel),
+        el('label', { class: 'field' }, el('span', {}, '备注'), nameIn)
+      ),
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, 'IP 白名单'), ipIn),
+        el('label', { class: 'field' }, el('span', {}, '有效天数（1-90）'), daysIn)
+      ),
+      el('button', { class: 'primary', onclick: function () {
+        api('/tokens', { method: 'POST', body: {
+          userId: userSel.value, name: nameIn.value.trim() || 'token', plan: planSel.value,
+          ip_whitelist: ipIn.value.trim(), expires_in_days: Number(daysIn.value) || 30,
+        } }).then(function (data) {
+          showKeyModal(data.key);
+          if (onDone) onDone();
+        }).catch(function (e) { toast(e.message, true); });
+      } }, '创建')
+    );
+    return form;
+  }
+
+  function showKeyModal(key) {
+    var overlay = el('div', { class: 'overlay' });
+    var close = function () { overlay.remove(); };
+    var box = el('div', { class: 'modal' },
+      el('h3', {}, '令牌创建成功'),
+      el('div', { class: 'muted' }, '请立即复制保存，关闭后无法再次查看。'),
+      el('div', { class: 'keybox' }, key),
+      el('div', { class: 'actions' },
+        el('button', { onclick: function () {
+          if (navigator.clipboard) navigator.clipboard.writeText(key).then(function () { toast('已复制'); });
+          else toast('请手动复制', true);
+        } }, '复制'),
+        el('button', { class: 'primary', onclick: close }, '我已保存')
+      )
+    );
+    overlay.appendChild(box);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+    document.body.appendChild(overlay);
+  }
+
+  function renderTokens(view) {
+    var refresh = function () { renderTokens(view); };
+    view.appendChild(tokenForm(view, refresh));
+    api('/tokens').then(function (data) {
+      var userMap = {};
+      state.users.forEach(function (u) { userMap[u.id] = u.username; });
+      var rows = (data.data || []).map(function (t) {
+        return [
+          t.name, userMap[t.user_id] || t.user_id,
+          el('span', { class: 'pill ' + t.plan }, t.plan),
+          t.key_prefix,
+          t.rpm + ' / ' + t.concurrency + ' / ' + t.tpm + ' / ' + t.daily_token_limit,
+          t.ip_whitelist ? t.ip_whitelist : '不限',
+          t.expires_at ? fmtDate(t.expires_at) : '不过期',
+          el('span', { class: 'pill ' + t.status }, t.status),
+          el('span', {},
+            el('button', { onclick: function () { editToken(t, refresh); } }, '限额'),
+            ' ',
+            t.status === 'active'
+              ? el('button', { class: 'danger', onclick: function () {
+                  api('/tokens/' + t.id + '/revoke', { method: 'POST' }).then(function () { toast('已停用'); refresh(); }).catch(function (e) { toast(e.message, true); });
+                } }, '停用')
+              : el('button', { onclick: function () {
+                  api('/tokens/' + t.id, { method: 'PATCH', body: { status: 'active' } }).then(function () { toast('已启用'); refresh(); }).catch(function (e) { toast(e.message, true); });
+                } }, '启用')
+          ),
+        ];
+      });
+      view.appendChild(el('div', { class: 'card' },
+        el('h2', {}, '令牌列表（RPM / 并发 / TPM / 日额度）'),
+        table(['备注', '用户', '套餐', '前缀', '限额', 'IP 白名单', '过期', '状态', '操作'], rows)
+      ));
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  function editToken(t, done) {
+    openModal('调整令牌限额：' + t.name, [
+      { name: 'rpm', label: 'RPM', type: 'number', value: t.rpm },
+      { name: 'concurrency', label: '并发', type: 'number', value: t.concurrency },
+      { name: 'tpm', label: 'TPM', type: 'number', value: t.tpm },
+      { name: 'daily_token_limit', label: '日额度（token）', type: 'number', value: t.daily_token_limit },
+      { name: 'ip_whitelist', label: 'IP 白名单', value: t.ip_whitelist || '' },
+    ], function (v) {
+      api('/tokens/' + t.id, { method: 'PATCH', body: {
+        rpm: Number(v.rpm), concurrency: Number(v.concurrency), tpm: Number(v.tpm),
+        daily_token_limit: Number(v.daily_token_limit), ip_whitelist: v.ip_whitelist.trim(),
+      } }).then(function () { toast('已更新'); done(); }).catch(function (e) { toast(e.message, true); });
+    });
+  }
+
+  // ---------------- 用户 ----------------
+
+  function renderUsers(view) {
+    var uIn = el('input', { placeholder: '用户名' });
+    var pIn = el('input', { type: 'password', placeholder: '密码' });
+    var rSel = el('select', {}, el('option', { value: 'user' }, 'user'), el('option', { value: 'admin' }, 'admin'));
+    view.appendChild(el('div', { class: 'card' },
+      el('h2', {}, '创建用户'),
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '用户名'), uIn),
+        el('label', { class: 'field' }, el('span', {}, '密码'), pIn),
+        el('label', { class: 'field' }, el('span', {}, '角色'), rSel)
+      ),
+      el('button', { class: 'primary', onclick: function () {
+        api('/users', { method: 'POST', body: { username: uIn.value.trim(), password: pIn.value, role: rSel.value } })
+          .then(function () { toast('已创建'); loadUsers().then(function () { renderUsers(view); }); })
+          .catch(function (e) { toast(e.message, true); });
+      } }, '创建')
+    ));
+    loadUsers().then(function () {
+      view.appendChild(el('div', { class: 'card' },
+        el('h2', {}, '用户列表'),
+        table(['用户名', '角色', '状态', '创建时间'], state.users.map(function (u) {
+          return [u.username, u.role, el('span', { class: 'pill ' + u.status }, u.status), fmtDate(u.created_at)];
+        }))
+      ));
+    });
+  }
+
+  function loadUsers() {
+    return api('/users').then(function (data) { state.users = data.data || []; });
+  }
+
+  // ---------------- 模型 ----------------
+
+  function renderModels(view) {
+    var nameIn = el('input', { placeholder: '对外模型名，如 deepseek-chat' });
+    var upIn = el('input', { placeholder: '上游模型名 / 接入点' });
+    var chSel = el('select', {}, el('option', { value: '' }, '加载中...'));
+    view.appendChild(el('div', { class: 'card' },
+      el('h2', {}, '新增模型映射'),
+      el('div', { class: 'muted-small', style: 'margin-bottom:10px' }, '只有这里配置且启用的模型才能被调用，可随时增删、启停。'),
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '对外模型名'), nameIn),
+        el('label', { class: 'field' }, el('span', {}, '上游模型名'), upIn),
+        el('label', { class: 'field' }, el('span', {}, '渠道'), chSel)
+      ),
+      el('button', { class: 'primary', onclick: function () {
+        api('/mappings', { method: 'POST', body: {
+          model_name: nameIn.value.trim(), upstream_model: upIn.value.trim(), channel_id: chSel.value,
+        } }).then(function () { toast('已添加'); renderModels(view); }).catch(function (e) { toast(e.message, true); });
+      } }, '添加')
+    ));
+    Promise.all([api('/channels'), api('/mappings')]).then(function (res) {
+      state.channels = res[0].data || [];
+      chSel.innerHTML = '';
+      state.channels.forEach(function (c) { chSel.appendChild(el('option', { value: c.id }, c.name + ' (' + c.provider + ')')); });
+      view.appendChild(el('div', { class: 'card' },
+        el('h2', {}, '模型列表'),
+        table(['对外模型名', '渠道', '上游模型', '状态', '操作'], (res[1].data || []).map(function (m) {
+          return [
+            m.model_name,
+            m.provider || m.channel_id,
+            m.upstream_model,
+            el('span', { class: 'pill ' + (m.enabled ? 'active' : 'disabled') }, m.enabled ? '启用' : '停用'),
+            el('button', { onclick: function () {
+              api('/mappings/' + m.id, { method: 'PATCH', body: { enabled: !m.enabled } })
+                .then(function () { renderModels(view); }).catch(function (e) { toast(e.message, true); });
+            } }, m.enabled ? '停用' : '启用'),
+          ];
+        }))
+      ));
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  // ---------------- 渠道 ----------------
+
+  function renderChannels(view) {
+    api('/channels').then(function (data) {
+      state.channels = data.data || [];
+      view.appendChild(el('div', { class: 'card' },
+        el('h2', {}, '上游渠道'),
+        el('div', { class: 'muted-small', style: 'margin-bottom:10px' }, '上游密钥加密存储，页面不回显；留空保存表示不修改。'),
+        table(['名称', '类型', 'Base URL', '密钥', '状态', '操作'], state.channels.map(function (c) {
+          return [
+            c.name, c.provider, c.base_url,
+            c.has_api_key ? '已配置' : el('span', { class: 'muted' }, '未配置'),
+            el('span', { class: 'pill ' + c.status }, c.status),
+            el('button', { onclick: function () { editChannel(c, function () { renderChannels(view); }); } }, '编辑'),
+          ];
+        }))
+      ));
+      view.appendChild(channelCreateForm(view));
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  function channelCreateForm(view) {
+    var nameIn = el('input', { placeholder: '渠道名称，如 自定义-OpenAI兼容' });
+    var provSel = el('select', {},
+      el('option', { value: 'deepseek' }, 'deepseek（OpenAI 兼容）'),
+      el('option', { value: 'aliyun' }, 'aliyun（OpenAI 兼容）'),
+      el('option', { value: 'doubao' }, 'doubao（火山方舟）'),
+      el('option', { value: 'custom' }, 'custom（通用 OpenAI 兼容）'));
+    var baseIn = el('input', { placeholder: 'https://.../v1' });
+    var keyIn = el('input', { type: 'password', placeholder: 'API Key' });
+    return el('div', { class: 'card' },
+      el('h2', {}, '新增服务商渠道'),
+      el('div', { class: 'row' },
+        el('label', { class: 'field' }, el('span', {}, '名称'), nameIn),
+        el('label', { class: 'field' }, el('span', {}, '类型'), provSel),
+        el('label', { class: 'field' }, el('span', {}, 'Base URL'), baseIn),
+        el('label', { class: 'field' }, el('span', {}, 'API Key'), keyIn)
+      ),
+      el('button', { class: 'primary', onclick: function () {
+        if (!nameIn.value.trim() || !baseIn.value.trim()) { toast('名称和 Base URL 必填', true); return; }
+        api('/channels', { method: 'POST', body: {
+          name: nameIn.value.trim(), provider: provSel.value, base_url: baseIn.value.trim(), api_key: keyIn.value.trim(),
+        } }).then(function () { toast('已新增'); renderChannels(view); }).catch(function (e) { toast(e.message, true); });
+      } }, '新增渠道')
+    );
+  }
+
+  function editChannel(c, done) {
+    openModal('编辑渠道：' + c.name, [
+      { name: 'name', label: '名称', value: c.name },
+      { name: 'base_url', label: 'Base URL', value: c.base_url },
+      { name: 'api_key', label: '上游密钥（留空不改）', value: '' },
+    ], function (v) {
+      var body = { name: v.name.trim(), base_url: v.base_url.trim() };
+      if (v.api_key.trim()) body.api_key = v.api_key.trim();
+      api('/channels/' + c.id, { method: 'PATCH', body: body })
+        .then(function () { toast('已保存'); done(); }).catch(function (e) { toast(e.message, true); });
+    });
+  }
+
+  // ---------------- 通用弹窗 ----------------
+
+  function openModal(title, fields, onSubmit) {
+    var overlay = el('div', { class: 'overlay' });
+    var inputs = {};
+    var box = el('div', { class: 'modal' }, el('h3', {}, title));
+    fields.forEach(function (f) {
+      var input;
+      if (f.type === 'select') {
+        input = el('select', {}, (f.options || []).map(function (o) { return el('option', { value: o.value }, o.label); }));
+      } else {
+        input = el('input', { type: f.type || 'text', value: f.value === undefined ? '' : f.value });
+      }
+      inputs[f.name] = input;
+      box.appendChild(el('label', { class: 'field' }, el('span', {}, f.label), input));
+    });
+    box.appendChild(el('div', { class: 'actions' },
+      el('button', { onclick: function () { overlay.remove(); } }, '取消'),
+      el('button', { class: 'primary', onclick: function () {
+        var values = {};
+        Object.keys(inputs).forEach(function (k) { values[k] = inputs[k].value; });
+        onSubmit(values);
+        overlay.remove();
+      } }, '保存')
+    ));
+    overlay.appendChild(box);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+  }
+
+  // ---------------- 启动 ----------------
+
+  if (state.token) {
+    loadAll().then(function () {
+      state.tab = setupIncomplete() ? 'setup' : 'overview';
+      showApp();
+    }).catch(function () { logout(); });
+  } else {
+    document.getElementById('login').classList.remove('hidden');
+  }
+})();
+</script>
+</body>
+</html>
