@@ -1,0 +1,23 @@
+node_modules/
+
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+
+# 运行时数据
+data/
+logs/
+*.log
+*.db
+*.db-wal
+*.db-shm
+
+# 构建产物
+dist/
+build/
+
+# 编辑器
+.DS_Store
+.idea/
+.vscode/
